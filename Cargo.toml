@@ -1,0 +1,8 @@
+[package]
+name = "garnish-phrases"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+garnish_lang_traits = { version = "0.0.11-alpha" }
+garnish_lang_compiler = { version = "0.0.11-alpha" }
