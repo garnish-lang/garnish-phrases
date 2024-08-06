@@ -6,11 +6,12 @@ use crate::context::{PhraseContext, PhraseStatus};
 
 struct PhraseInfo {
     phrase_parts: Vec<String>,
+    arguments: Vec<usize>
 }
 
 impl PhraseInfo {
     pub fn new(part: String) -> Self {
-        PhraseInfo { phrase_parts: vec![part] }
+        PhraseInfo { phrase_parts: vec![part], arguments: vec![] }
     }
 
     pub fn full_text(&self) -> String {
@@ -22,7 +23,11 @@ impl PhraseInfo {
     }
 
     pub fn add_part(&mut self, part: String) {
-        self.phrase_parts.push(part)
+        self.phrase_parts.push(part);
+    }
+
+    pub fn add_argument(&mut self, argument: usize) {
+        self.arguments.push(argument);
     }
 }
 
@@ -42,7 +47,8 @@ pub fn reduce_phrases<Context: PhraseContext>(
             &mut phrases,
             context,
             parse_result,
-            &mut new_result
+            &mut new_result,
+            false
         )?;
 
         return Ok(new_result);
@@ -86,7 +92,8 @@ pub fn reduce_phrases<Context: PhraseContext>(
             &mut phrases,
             context,
             parse_result,
-            &mut new_result
+            &mut new_result,
+            true
         )?;
 
         check_node_index_for_phrase(
@@ -94,7 +101,8 @@ pub fn reduce_phrases<Context: PhraseContext>(
             &mut phrases,
             context,
             parse_result,
-            &mut new_result
+            &mut new_result,
+            false
         )?;
     }
 
@@ -107,6 +115,7 @@ fn check_node_index_for_phrase<Context: PhraseContext>(
     context: &Context,
     original_result: &ParseResult,
     result: &mut ParseResult,
+    is_left_of_parent: bool,
 ) -> Result<(), String> {
     match node_index_opt {
         None => Ok(()),
@@ -118,6 +127,7 @@ fn check_node_index_for_phrase<Context: PhraseContext>(
                 phrases,
                 context,
                 result,
+                is_left_of_parent,
             )
         }
     }
@@ -129,6 +139,7 @@ fn check_node_for_phrase<Context: PhraseContext>(
     phrases: &mut Vec<PhraseInfo>,
     context: &Context,
     result: &mut ParseResult,
+    is_left_of_parent: bool,
 ) -> Result<(), String> {
     match node.get_definition() {
         Definition::Identifier => {
@@ -196,32 +207,90 @@ fn check_node_for_phrase<Context: PhraseContext>(
                         PhraseStatus::Complete => {
                             // end of multi-word phrase, resolve now
 
-                            // update current node token to be full phrase
-                            match result.get_node_mut(node_index) {
-                                None => Err(format!("Node at {} not found", node_index))?,
-                                Some(node) => {
-                                    let new_token = LexerToken::new(
-                                        new_phrase_text,
-                                        TokenType::Identifier,
-                                        node.get_lex_token().get_line(),
-                                        node.get_lex_token().get_column(),
-                                    );
-                                    node.set_lex_token(new_token);
+                            match info.arguments.len() {
+                                0 => {
+                                    // update current node token to be full phrase
+                                    match result.get_node_mut(node_index) {
+                                        None => Err(format!("Node at {} not found", node_index))?,
+                                        Some(node) => {
+                                            let new_token = LexerToken::new(
+                                                new_phrase_text,
+                                                TokenType::Identifier,
+                                                node.get_lex_token().get_line(),
+                                                node.get_lex_token().get_column(),
+                                            );
+                                            node.set_lex_token(new_token);
+                                        }
+                                    }
+
+                                    // all multi-word phrases should have a parent
+                                    // update parent to be empty apply
+                                    match node.get_parent().and_then(|p| result.get_node_mut(p)) {
+                                        None => Err(format!("Node at {} not found", node_index))?,
+                                        Some(parent) => {
+                                            parent.set_definition(Definition::EmptyApply);
+
+                                            // empty expects left to be populated
+                                            // but current node should be the right one
+                                            // because if it were the left it would've resolved as a single word phrase
+                                            parent.set_left(Some(node_index));
+                                            parent.set_right(None);
+                                        }
+                                    }
                                 }
-                            }
+                                1 => {
+                                    // update current node token to be full phrase
 
-                            // all multi-word phrases should have a parent
-                            // update parent to be empty apply
-                            match node.get_parent().and_then(|p| result.get_node_mut(p)) {
-                                None => Err(format!("Node at {} not found", node_index))?,
-                                Some(parent) => {
-                                    parent.set_definition(Definition::EmptyApply);
+                                    // this should be right side of parent
+                                    match result.get_node_mut(node_index) {
+                                        None => Err(format!("Node at {} not found", node_index))?,
+                                        Some(node) => {
+                                            let new_token = LexerToken::new(
+                                                new_phrase_text,
+                                                TokenType::Identifier,
+                                                node.get_lex_token().get_line(),
+                                                node.get_lex_token().get_column(),
+                                            );
+                                            node.set_lex_token(new_token);
+                                        }
+                                    }
 
-                                    // empty expects left to be populated
-                                    // but current node should be the right one
-                                    // because if it were the left it would've resolved as a single word phrase
-                                    parent.set_left(Some(node_index));
-                                    parent.set_right(None);
+                                    // all multi-word phrases should have a parent
+                                    // update parent to be empty apply
+                                    match node.get_parent().and_then(|p| result.get_node_mut(p)) {
+                                        None => Err(format!("Node at {} not found", node_index))?,
+                                        Some(parent) => {
+                                            // Using ApplyTo instead of Apply so no swapping needs to be done
+                                            parent.set_definition(Definition::ApplyTo);
+
+                                            // for single argument just replace current left side to point to argument
+                                            let new_left = info.arguments.get(0).cloned();
+                                            parent.set_left(new_left);
+
+                                            // update argument to correct parent
+                                            match new_left.and_then(|i| result.get_node_mut(i)) {
+                                                None => Err(format!("Node at {:?} not found", new_left))?,
+                                                Some(left_node) => {
+                                                    left_node.set_parent(node.get_parent())
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                                _n => {
+                                    // Create list of arguments on left side
+                                    // creating from top so reverse arguments to make first at bottom
+                                    // for (index, arg) in info.arguments.iter().enumerate().rev() {
+                                    //     match result.get_node_mut(left_index) {
+                                    //         None => Err(format!("Node at {} not found", node_index))?,
+                                    //         Some(left_node) => {
+                                    //             left_node.set_definition(Definition::List);
+                                    //             // set right to arg
+                                    //             left_node.set_right(Some(*arg));
+                                    //         }
+                                    //     }
+                                    // }
+                                    todo!()
                                 }
                             }
                         }
@@ -229,7 +298,17 @@ fn check_node_for_phrase<Context: PhraseContext>(
                 }
             }
         }
-        _ => {}
+        // List to left of parent should not be included in arg lists
+        Definition::List if is_left_of_parent => (),
+        _ => {
+            // add to argument list if there's an existing phrase
+            match phrases.last_mut() {
+                None => (),
+                Some(info) => {
+                    info.add_argument(node_index);
+                }
+            }
+        }
     };
 
     Ok(())
@@ -298,5 +377,40 @@ mod tests {
         assert_eq!(identifier_token.get_right(), None);
         assert_eq!(identifier_token.get_parent(), Some(1));
         assert_eq!(identifier_token.get_lex_token().get_text(), "task");
+    }
+
+    #[test]
+    fn simple_phrase_with_argument() {
+        let input = "perform 5 task";
+
+        let tokens = lex(input).unwrap();
+        let parsed = parse(&tokens).unwrap();
+
+        let mut context = SimplePhraseContext::new();
+        context.add_phrase("perform_task").unwrap();
+
+        let phrased_tokens = reduce_phrases(&parsed, &context).unwrap();
+
+        let apply_token = phrased_tokens.get_node(3).unwrap();
+
+        assert_eq!(phrased_tokens.get_root(), 3);
+        assert_eq!(apply_token.get_definition(), Definition::ApplyTo);
+        assert_eq!(apply_token.get_left(), Some(2));
+        assert_eq!(apply_token.get_right(), Some(4));
+        assert_eq!(apply_token.get_parent(), None);
+
+        let identifier_token = phrased_tokens.get_node(2).unwrap();
+        assert_eq!(identifier_token.get_definition(), Definition::Number);
+        assert_eq!(identifier_token.get_left(), None);
+        assert_eq!(identifier_token.get_right(), None);
+        assert_eq!(identifier_token.get_parent(), Some(3));
+        assert_eq!(identifier_token.get_lex_token().get_text(), "5");
+
+        let identifier_token = phrased_tokens.get_node(4).unwrap();
+        assert_eq!(identifier_token.get_definition(), Definition::Identifier);
+        assert_eq!(identifier_token.get_left(), None);
+        assert_eq!(identifier_token.get_right(), None);
+        assert_eq!(identifier_token.get_parent(), Some(3));
+        assert_eq!(identifier_token.get_lex_token().get_text(), "perform_task");
     }
 }
