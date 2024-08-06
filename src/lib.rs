@@ -117,7 +117,6 @@ fn check_node_index_for_phrase<Context: PhraseContext>(
                 index,
                 phrases,
                 context,
-                original_result,
                 result,
             )
         }
@@ -129,7 +128,6 @@ fn check_node_for_phrase<Context: PhraseContext>(
     node_index: usize,
     phrases: &mut Vec<PhraseInfo>,
     context: &Context,
-    original_result: &ParseResult,
     result: &mut ParseResult,
 ) -> Result<(), String> {
     match node.get_definition() {
