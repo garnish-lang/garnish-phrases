@@ -1,16 +1,6 @@
-use std::collections::HashMap;
+mod context;
 use garnish_lang_compiler::parse::{Definition, ParseNode, ParseResult, SecondaryDefinition};
-
-#[derive(Debug, Copy, Clone, Ord, PartialOrd, Eq, PartialEq)]
-pub enum PhraseStatus {
-    Incomplete,
-    Complete,
-    NotAPhrase,
-}
-
-pub trait PhraseContext {
-    fn get_phrase_status(&self, s: &str) -> PhraseStatus;
-}
+use crate::context::{PhraseContext, PhraseStatus};
 
 struct PhraseInfo {
     phrase_parts: Vec<String>,
@@ -147,35 +137,12 @@ pub fn reduce_phrases<Context: PhraseContext>(
     return Ok(new_result);
 }
 
-pub struct SimplePhraseContext {
-    part_map: HashMap<String, PhraseStatus>
-}
-
-impl SimplePhraseContext {
-    pub fn new() -> Self {
-        SimplePhraseContext { part_map: HashMap::new() }
-    }
-
-    pub fn add_phrase(&mut self, phrase: &str) -> Result<(), String> {
-        self.part_map.insert(phrase.to_string(), PhraseStatus::Complete);
-        Ok(())
-    }
-}
-
-impl PhraseContext for SimplePhraseContext {
-    fn get_phrase_status(&self, s: &str) -> PhraseStatus {
-        match self.part_map.get(s) {
-            None => PhraseStatus::NotAPhrase,
-            Some(status) => *status
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use garnish_lang_compiler::lex::lex;
     use garnish_lang_compiler::parse::{Definition, parse};
-    use crate::{reduce_phrases, SimplePhraseContext};
+    use crate::reduce_phrases;
+    use crate::context::SimplePhraseContext;
 
     #[test]
     fn simple_phrase() {
