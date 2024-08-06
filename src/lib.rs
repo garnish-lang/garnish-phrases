@@ -6,7 +6,7 @@ use crate::context::{PhraseContext, PhraseStatus};
 
 struct PhraseInfo {
     phrase_parts: Vec<String>,
-    arguments: Vec<usize>
+    arguments: Vec<usize>,
 }
 
 impl PhraseInfo {
@@ -48,7 +48,7 @@ pub fn reduce_phrases<Context: PhraseContext>(
             context,
             parse_result,
             &mut new_result,
-            false
+            false,
         )?;
 
         return Ok(new_result);
@@ -93,7 +93,7 @@ pub fn reduce_phrases<Context: PhraseContext>(
             context,
             parse_result,
             &mut new_result,
-            true
+            true,
         )?;
 
         check_node_index_for_phrase(
@@ -102,7 +102,7 @@ pub fn reduce_phrases<Context: PhraseContext>(
             context,
             parse_result,
             &mut new_result,
-            false
+            false,
         )?;
     }
 
@@ -141,7 +141,7 @@ fn check_node_for_phrase<Context: PhraseContext>(
     result: &mut ParseResult,
     is_left_of_parent: bool,
 ) -> Result<(), String> {
-    match node.get_definition() {
+    let arg_index = match node.get_definition() {
         Definition::Identifier => {
             // check all identifier's for being a phrase part
 
@@ -155,32 +155,17 @@ fn check_node_for_phrase<Context: PhraseContext>(
                         PhraseStatus::Incomplete => {
                             // start new phrase
                             phrases.push(PhraseInfo::new(phrase_text));
+                            None
                         }
                         PhraseStatus::Complete => {
                             // single word phrase, resolve immediately
-                            // and add a new empty apply node
-                            let new_index = result.get_nodes().len();
-                            result.add_node(ParseNode::new(
-                                Definition::EmptyApply,
-                                SecondaryDefinition::UnarySuffix,
-                                node.get_parent(),
-                                Some(node_index),
-                                None,
-                                node.get_lex_token().clone(), // clone so debugging points to identifier
-                            ));
-
-                            if result.get_root() == node_index {
-                                result.set_root(new_index);
-                            }
-
-                            match result.get_node_mut(node_index) {
-                                None => Err(format!("Node at {} not found", node_index))?,
-                                Some(node) => {
-                                    node.set_parent(Some(new_index));
-                                }
-                            }
+                            resolve_single_word_phrase(
+                                node,
+                                node_index,
+                                result,
+                            )?
                         }
-                        PhraseStatus::NotAPhrase => {} // continue no changes
+                        PhraseStatus::NotAPhrase => Some(node_index) // continue no changes
                     }
                 }
                 Some(info) => {
@@ -193,16 +178,24 @@ fn check_node_for_phrase<Context: PhraseContext>(
                             match context.get_phrase_status(&phrase_text) {
                                 PhraseStatus::Incomplete => {
                                     phrases.push(PhraseInfo::new(phrase_text));
+                                    None
                                 }
                                 PhraseStatus::Complete => {
-                                    todo!()
+                                    resolve_single_word_phrase(
+                                        node,
+                                        node_index,
+                                        result,
+                                    )?
                                 }
-                                PhraseStatus::NotAPhrase => {} // continue no changes
+                                PhraseStatus::NotAPhrase => {
+                                    Some(node_index)
+                                } // continue no changes
                             }
                         }
                         PhraseStatus::Incomplete => {
                             // continuation
                             info.add_part(phrase_text);
+                            None
                         }
                         PhraseStatus::Complete => {
                             // end of multi-word phrase, resolve now
@@ -309,29 +302,65 @@ fn check_node_for_phrase<Context: PhraseContext>(
                                             }
                                         };
 
-                                        next_parent = left
+                                        next_parent = left;
                                     }
+
                                 }
                             }
+
+                            node.get_parent()
                         }
                     }
                 }
             }
         }
         // List to left of parent should not be included in arg lists
-        Definition::List if is_left_of_parent => (),
-        _ => {
-            // add to argument list if there's an existing phrase
-            match phrases.last_mut() {
-                None => (),
-                Some(info) => {
-                    info.add_argument(node_index);
-                }
-            }
-        }
+        Definition::List if is_left_of_parent => None,
+        _ => Some(node_index)
     };
 
+    match arg_index {
+        None => (),
+        // add to argument list if there's an existing phrase
+        Some(index) => match phrases.last_mut() {
+            None => (),
+            Some(info) => {
+                info.add_argument(index);
+            }
+        }
+    }
+
     Ok(())
+}
+
+fn resolve_single_word_phrase(
+    node: &ParseNode,
+    node_index: usize,
+    result: &mut ParseResult,
+) -> Result<Option<usize>, String> {
+    // and add a new empty apply node
+    let new_index = result.get_nodes().len();
+    result.add_node(ParseNode::new(
+        Definition::EmptyApply,
+        SecondaryDefinition::UnarySuffix,
+        node.get_parent(),
+        Some(node_index),
+        None,
+        node.get_lex_token().clone(), // clone so debugging points to identifier
+    ));
+
+    if result.get_root() == node_index {
+        result.set_root(new_index);
+    }
+
+    match result.get_node_mut(node_index) {
+        None => Err(format!("Node at {} not found", node_index))?,
+        Some(node) => {
+            node.set_parent(Some(new_index));
+        }
+    }
+
+    Ok(Some(new_index))
 }
 
 #[cfg(test)]
@@ -586,5 +615,50 @@ mod tests {
         assert_eq!(identifier_token.get_right(), None);
         assert_eq!(identifier_token.get_parent(), Some(5));
         assert_eq!(identifier_token.get_lex_token().get_text(), "10");
+    }
+
+    #[test]
+    fn nested_phrase() {
+        let input = "perform special task";
+
+        let tokens = lex(input).unwrap();
+        let parsed = parse(&tokens).unwrap();
+
+        let mut context = SimplePhraseContext::new();
+        context.add_phrase("perform_task").unwrap();
+        context.add_phrase("special").unwrap();
+
+        let phrased_tokens = reduce_phrases(&parsed, &context).unwrap();
+
+        let apply_token = phrased_tokens.get_node(3).unwrap();
+
+        assert_eq!(phrased_tokens.get_nodes().len(), 6);
+
+        assert_eq!(phrased_tokens.get_root(), 3);
+        assert_eq!(apply_token.get_definition(), Definition::ApplyTo);
+        assert_eq!(apply_token.get_left(), Some(5));
+        assert_eq!(apply_token.get_right(), Some(4));
+        assert_eq!(apply_token.get_parent(), None);
+
+        let identifier_token = phrased_tokens.get_node(2).unwrap();
+        assert_eq!(identifier_token.get_definition(), Definition::Identifier);
+        assert_eq!(identifier_token.get_left(), None);
+        assert_eq!(identifier_token.get_right(), None);
+        assert_eq!(identifier_token.get_parent(), Some(5));
+        assert_eq!(identifier_token.get_lex_token().get_text(), "special");
+
+        let identifier_token = phrased_tokens.get_node(4).unwrap();
+        assert_eq!(identifier_token.get_definition(), Definition::Identifier);
+        assert_eq!(identifier_token.get_left(), None);
+        assert_eq!(identifier_token.get_right(), None);
+        assert_eq!(identifier_token.get_parent(), Some(3));
+        assert_eq!(identifier_token.get_lex_token().get_text(), "perform_task");
+
+        let identifier_token = phrased_tokens.get_node(5).unwrap();
+        assert_eq!(identifier_token.get_definition(), Definition::EmptyApply);
+        assert_eq!(identifier_token.get_left(), Some(2));
+        assert_eq!(identifier_token.get_right(), None);
+        assert_eq!(identifier_token.get_parent(), Some(3));
+        assert_eq!(identifier_token.get_lex_token().get_text(), "special");
     }
 }
