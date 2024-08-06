@@ -26,12 +26,24 @@ impl SimplePhraseContext {
         SimplePhraseContext { part_map: HashMap::new() }
     }
 
+    pub fn phrase_count(&self) -> usize {
+        self.part_map.len()
+    }
+
     pub fn add_phrase(&mut self, phrase: &str) -> Result<(), SimpleContextCodes> {
         let parts = phrase.split("_").collect::<Vec<&str>>();
+
+        if parts.len() == 0 {
+            // unreachable?
+            return Ok(());
+        }
 
         let mut running_parts = vec![];
 
         for part in parts.iter().take(parts.len() - 1) {
+            if part.is_empty() {
+                continue;
+            }
             running_parts.push(*part);
             let incomplete_phrase = running_parts.join("_");
             match self.part_map.get(&incomplete_phrase) {
@@ -48,6 +60,9 @@ impl SimplePhraseContext {
         match parts.last() {
             None => unreachable!(),
             Some(part) => {
+                if part.is_empty() {
+                    return Ok(());
+                }
                 running_parts.push(*part);
                 let complete_phrase = running_parts.join("_");
                 match self.part_map.get(&complete_phrase) {
@@ -109,6 +124,59 @@ mod tests {
         assert_eq!(result, Ok(()));
         assert_eq!(context.get_phrase_status("some"), PhraseStatus::Incomplete);
         assert_eq!(context.get_phrase_status("some_phrase"), PhraseStatus::Complete);
+    }
+
+    #[test]
+    fn add_three_word_phrase() {
+        let mut context = SimplePhraseContext::new();
+        let result = context.add_phrase("some_great_phrase");
+
+        assert_eq!(result, Ok(()));
+        assert_eq!(context.get_phrase_status("some"), PhraseStatus::Incomplete);
+        assert_eq!(context.get_phrase_status("some_great"), PhraseStatus::Incomplete);
+        assert_eq!(context.get_phrase_status("some_great_phrase"), PhraseStatus::Complete);
+    }
+
+    #[test]
+    fn add_three_word_phrase_extra_underscores_no_effect() {
+        let mut context = SimplePhraseContext::new();
+        let result = context.add_phrase("_some__great__phrase");
+
+        assert_eq!(result, Ok(()));
+        assert_eq!(context.get_phrase_status("some"), PhraseStatus::Incomplete);
+        assert_eq!(context.get_phrase_status("some_great"), PhraseStatus::Incomplete);
+        assert_eq!(context.get_phrase_status("some_great_phrase"), PhraseStatus::Complete);
+        assert_eq!(context.phrase_count(), 3);
+    }
+
+    #[test]
+    fn add_three_word_phrase_extra_underscores_end_forces_last_incomplete() {
+        let mut context = SimplePhraseContext::new();
+        let result = context.add_phrase("_some__great__phrase__");
+
+        assert_eq!(result, Ok(()));
+        assert_eq!(context.get_phrase_status("some"), PhraseStatus::Incomplete);
+        assert_eq!(context.get_phrase_status("some_great"), PhraseStatus::Incomplete);
+        assert_eq!(context.get_phrase_status("some_great_phrase"), PhraseStatus::Incomplete);
+        assert_eq!(context.phrase_count(), 3);
+    }
+
+    #[test]
+    fn empty_phrase_ok() {
+        let mut context = SimplePhraseContext::new();
+        let result = context.add_phrase("");
+
+        assert_eq!(result, Ok(()));
+        assert_eq!(context.phrase_count(), 0);
+    }
+
+    #[test]
+    fn just_underscore_ok() {
+        let mut context = SimplePhraseContext::new();
+        let result = context.add_phrase("_");
+
+        assert_eq!(result, Ok(()));
+        assert_eq!(context.phrase_count(), 0);
     }
 
     #[test]
