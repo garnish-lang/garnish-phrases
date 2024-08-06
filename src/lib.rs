@@ -66,12 +66,14 @@ pub fn reduce_phrases<Context: PhraseContext>(
                 let phrase_text = current_node.get_lex_token().get_text().clone();
                 match phrases.last_mut() {
                     None => {
+                        // no existing phrase
                         match context.get_phrase_status(&phrase_text) {
                             PhraseStatus::Incomplete => {
+                                // start new phrase
                                 phrases.push(PhraseInfo::new(phrase_text));
                             }
                             PhraseStatus::Complete => {
-                                // single word phrase
+                                // single word phrase, resolve immediately
                                 // and add a new empty apply node
                                 let new_index = new_result.get_nodes().len();
                                 new_result.add_node(ParseNode::new(
@@ -98,9 +100,11 @@ pub fn reduce_phrases<Context: PhraseContext>(
                         }
                     }
                     Some(info) => {
+                        // existing phrase, first check if current is continuation
                         let new_phrase_text = info.full_text_with(&phrase_text);
                         match context.get_phrase_status(&new_phrase_text) {
                             PhraseStatus::NotAPhrase => {
+                                // not a continuation
                                 // check if current text can be a phrase on its own
                                 match context.get_phrase_status(&phrase_text) {
                                     PhraseStatus::Incomplete => {
@@ -114,9 +118,11 @@ pub fn reduce_phrases<Context: PhraseContext>(
                                 }
                             }
                             PhraseStatus::Incomplete => {
+                                // continuation
                                 info.add_part(phrase_text);
                             }
                             PhraseStatus::Complete => {
+                                // end of phase, resolve now
                                 todo!()
                             }
                         }
