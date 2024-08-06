@@ -214,24 +214,37 @@ fn check_node_for_phrase<Context: PhraseContext>(
                                 }
                             }
 
-                            match info.arguments.len() {
+                            let arg = match info.arguments.len() {
                                 0 => {
+                                    let new_index = result.get_nodes().len();
                                     match node.get_parent().and_then(|p| result.get_node_mut(p)) {
-                                        None => Err(format!("Node at {} not found", node_index))?,
+                                        None => Err(format!("Node at {:?} not found", node.get_parent()))?,
                                         Some(parent) => {
-                                            parent.set_definition(Definition::EmptyApply);
+                                            parent.set_right(Some(new_index));
 
-                                            // empty expects left to be populated
-                                            // but current node should be the right one
-                                            // because if it were the left it would've resolved as a single word phrase
-                                            parent.set_left(Some(node_index));
-                                            parent.set_right(None);
+                                            result.add_node(ParseNode::new(
+                                                Definition::EmptyApply,
+                                                SecondaryDefinition::UnarySuffix,
+                                                node.get_parent(),
+                                                Some(node_index),
+                                                None,
+                                                node.get_lex_token().clone(), // clone so debugging points to identifier
+                                            ));
+
+                                            match result.get_node_mut(node_index) {
+                                                None => Err(format!("Node at {} not found", node_index))?,
+                                                Some(node) => {
+                                                    node.set_parent(Some(new_index));
+                                                }
+                                            }
                                         }
                                     }
+
+                                    Some(new_index)
                                 }
                                 1 => {
                                     match node.get_parent().and_then(|p| result.get_node_mut(p)) {
-                                        None => Err(format!("Node at {} not found", node_index))?,
+                                        None => Err(format!("Node at {:?} not found", node.get_parent()))?,
                                         Some(parent) => {
                                             // Using ApplyTo instead of Apply so no swapping needs to be done
                                             parent.set_definition(Definition::ApplyTo);
@@ -249,6 +262,7 @@ fn check_node_for_phrase<Context: PhraseContext>(
                                             }
                                         }
                                     }
+                                    node.get_parent()
                                 }
                                 _n => {
                                     let mut next_parent = match node.get_parent().and_then(|p| result.get_node_mut(p)) {
@@ -305,10 +319,13 @@ fn check_node_for_phrase<Context: PhraseContext>(
                                         next_parent = left;
                                     }
 
+                                    node.get_parent()
                                 }
-                            }
+                            };
 
-                            node.get_parent()
+                            phrases.pop();
+
+                            arg
                         }
                     }
                 }
@@ -660,5 +677,49 @@ mod tests {
         assert_eq!(identifier_token.get_right(), None);
         assert_eq!(identifier_token.get_parent(), Some(3));
         assert_eq!(identifier_token.get_lex_token().get_text(), "special");
+    }
+
+    #[test]
+    fn nested_two_word_phrase() {
+        let input = "perform super special task";
+
+        let tokens = lex(input).unwrap();
+        let parsed = parse(&tokens).unwrap();
+
+        let mut context = SimplePhraseContext::new();
+        context.add_phrase("perform_task").unwrap();
+        context.add_phrase("super_special").unwrap();
+
+        let phrased_tokens = reduce_phrases(&parsed, &context).unwrap();
+
+        let apply_token = phrased_tokens.get_node(5).unwrap();
+
+        assert_eq!(phrased_tokens.get_nodes().len(), 8);
+
+        assert_eq!(phrased_tokens.get_root(), 5);
+        assert_eq!(apply_token.get_definition(), Definition::ApplyTo);
+        assert_eq!(apply_token.get_left(), Some(7));
+        assert_eq!(apply_token.get_right(), Some(6));
+        assert_eq!(apply_token.get_parent(), None);
+
+        let identifier_token = phrased_tokens.get_node(6).unwrap();
+        assert_eq!(identifier_token.get_definition(), Definition::Identifier);
+        assert_eq!(identifier_token.get_left(), None);
+        assert_eq!(identifier_token.get_right(), None);
+        assert_eq!(identifier_token.get_parent(), Some(5));
+        assert_eq!(identifier_token.get_lex_token().get_text(), "perform_task");
+
+        let identifier_token = phrased_tokens.get_node(7).unwrap();
+        assert_eq!(identifier_token.get_definition(), Definition::EmptyApply);
+        assert_eq!(identifier_token.get_left(), Some(4));
+        assert_eq!(identifier_token.get_right(), None);
+        assert_eq!(identifier_token.get_parent(), Some(5));
+
+        let identifier_token = phrased_tokens.get_node(4).unwrap();
+        assert_eq!(identifier_token.get_definition(), Definition::Identifier);
+        assert_eq!(identifier_token.get_left(), None);
+        assert_eq!(identifier_token.get_right(), None);
+        assert_eq!(identifier_token.get_parent(), Some(7));
+        assert_eq!(identifier_token.get_lex_token().get_text(), "super_special");
     }
 }
