@@ -231,24 +231,6 @@ fn check_node_for_phrase<Context: PhraseContext>(
                 }
             }
         }
-        Definition::List => {
-            match node.get_right() {
-                None => (),
-                Some(right_index) => match original_result.get_node(right_index) {
-                    None => {}
-                    Some(right_node) => {
-                        check_node_for_phrase(
-                            right_node,
-                            right_index,
-                            phrases,
-                            context,
-                            original_result,
-                            result,
-                        )?
-                    }
-                }
-            }
-        }
         _ => {}
     };
 
