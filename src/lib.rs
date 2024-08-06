@@ -517,4 +517,64 @@ mod tests {
         assert_eq!(identifier_token.get_parent(), Some(3));
         assert_eq!(identifier_token.get_lex_token().get_text(), "10");
     }
+
+    #[test]
+    fn simple_phrase_with_three_arguments() {
+        let input = "perform 5 10 15 task";
+
+        let tokens = lex(input).unwrap();
+        let parsed = parse(&tokens).unwrap();
+
+        let mut context = SimplePhraseContext::new();
+        context.add_phrase("perform_task").unwrap();
+
+        let phrased_tokens = reduce_phrases(&parsed, &context).unwrap();
+
+        let apply_token = phrased_tokens.get_node(7).unwrap();
+
+        assert_eq!(apply_token.get_definition(), Definition::ApplyTo);
+        assert_eq!(apply_token.get_left(), Some(5));
+        assert_eq!(apply_token.get_right(), Some(8));
+        assert_eq!(apply_token.get_parent(), None);
+
+        let identifier_token = phrased_tokens.get_node(8).unwrap();
+        assert_eq!(identifier_token.get_definition(), Definition::Identifier);
+        assert_eq!(identifier_token.get_left(), None);
+        assert_eq!(identifier_token.get_right(), None);
+        assert_eq!(identifier_token.get_parent(), Some(7));
+        assert_eq!(identifier_token.get_lex_token().get_text(), "perform_task");
+
+        let identifier_token = phrased_tokens.get_node(5).unwrap();
+        assert_eq!(identifier_token.get_definition(), Definition::List);
+        assert_eq!(identifier_token.get_left(), Some(3));
+        assert_eq!(identifier_token.get_right(), Some(6));
+        assert_eq!(identifier_token.get_parent(), Some(7));
+
+        let identifier_token = phrased_tokens.get_node(6).unwrap();
+        assert_eq!(identifier_token.get_definition(), Definition::Number);
+        assert_eq!(identifier_token.get_left(), None);
+        assert_eq!(identifier_token.get_right(), None);
+        assert_eq!(identifier_token.get_parent(), Some(5));
+        assert_eq!(identifier_token.get_lex_token().get_text(), "15");
+
+        let identifier_token = phrased_tokens.get_node(3).unwrap();
+        assert_eq!(identifier_token.get_definition(), Definition::List);
+        assert_eq!(identifier_token.get_left(), Some(2));
+        assert_eq!(identifier_token.get_right(), Some(4));
+        assert_eq!(identifier_token.get_parent(), Some(5));
+
+        let identifier_token = phrased_tokens.get_node(2).unwrap();
+        assert_eq!(identifier_token.get_definition(), Definition::Number);
+        assert_eq!(identifier_token.get_left(), None);
+        assert_eq!(identifier_token.get_right(), None);
+        assert_eq!(identifier_token.get_parent(), Some(3));
+        assert_eq!(identifier_token.get_lex_token().get_text(), "5");
+
+        let identifier_token = phrased_tokens.get_node(4).unwrap();
+        assert_eq!(identifier_token.get_definition(), Definition::Number);
+        assert_eq!(identifier_token.get_left(), None);
+        assert_eq!(identifier_token.get_right(), None);
+        assert_eq!(identifier_token.get_parent(), Some(3));
+        assert_eq!(identifier_token.get_lex_token().get_text(), "10");
+    }
 }
