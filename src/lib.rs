@@ -1,4 +1,6 @@
 mod context;
+
+use garnish_lang_compiler::lex::{LexerToken, TokenType};
 use garnish_lang_compiler::parse::{Definition, ParseNode, ParseResult, SecondaryDefinition};
 use crate::context::{PhraseContext, PhraseStatus};
 
@@ -47,81 +49,14 @@ pub fn reduce_phrases<Context: PhraseContext>(
 
     let mut phrases = vec![];
     while let Some(current_node) = next_node {
-        match current_node.get_definition() {
-            Definition::Identifier => {
-                // check all identifier's for being a phrase part
-
-                // if there is an existing phrase in progress
-                // check if current identifier can be a part of that phrase
-                let phrase_text = current_node.get_lex_token().get_text().clone();
-                match phrases.last_mut() {
-                    None => {
-                        // no existing phrase
-                        match context.get_phrase_status(&phrase_text) {
-                            PhraseStatus::Incomplete => {
-                                // start new phrase
-                                phrases.push(PhraseInfo::new(phrase_text));
-                            }
-                            PhraseStatus::Complete => {
-                                // single word phrase, resolve immediately
-                                // and add a new empty apply node
-                                let new_index = new_result.get_nodes().len();
-                                new_result.add_node(ParseNode::new(
-                                    Definition::EmptyApply,
-                                    SecondaryDefinition::UnarySuffix,
-                                    current_node.get_parent(),
-                                    Some(current_index),
-                                    None,
-                                    current_node.get_lex_token().clone(), // clone so debugging points to identifier
-                                ));
-
-                                if new_result.get_root() == current_index {
-                                    new_result.set_root(new_index);
-                                }
-
-                                match new_result.get_node_mut(current_index) {
-                                    None => Err(format!("Node at {} not found", current_index))?,
-                                    Some(node) => {
-                                        node.set_parent(Some(new_index));
-                                    }
-                                }
-                            }
-                            PhraseStatus::NotAPhrase => {} // continue no changes
-                        }
-                    }
-                    Some(info) => {
-                        // existing phrase, first check if current is continuation
-                        let new_phrase_text = info.full_text_with(&phrase_text);
-                        match context.get_phrase_status(&new_phrase_text) {
-                            PhraseStatus::NotAPhrase => {
-                                // not a continuation
-                                // check if current text can be a phrase on its own
-                                match context.get_phrase_status(&phrase_text) {
-                                    PhraseStatus::Incomplete => {
-                                        phrases.push(PhraseInfo::new(phrase_text));
-                                    }
-                                    PhraseStatus::Complete => {
-                                        phrases.push(PhraseInfo::new(phrase_text));
-                                        todo!()
-                                    }
-                                    PhraseStatus::NotAPhrase => {} // continue no changes
-                                }
-                            }
-                            PhraseStatus::Incomplete => {
-                                // continuation
-                                info.add_part(phrase_text);
-                            }
-                            PhraseStatus::Complete => {
-                                // end of phase, resolve now
-                                todo!()
-                            }
-                        }
-                    }
-                }
-            }
-            Definition::List => {} // skip
-            _ => {}
-        }
+        check_node_for_phrase(
+            current_node,
+            current_index,
+            &mut phrases,
+            context,
+            parse_result,
+            &mut new_result
+        )?;
 
         match current_node.get_parent() {
             None => {
@@ -135,6 +70,137 @@ pub fn reduce_phrases<Context: PhraseContext>(
     }
 
     return Ok(new_result);
+}
+
+fn check_node_for_phrase<Context: PhraseContext>(
+    node: &ParseNode,
+    node_index: usize,
+    phrases: &mut Vec<PhraseInfo>,
+    context: &Context,
+    original_result: &ParseResult,
+    result: &mut ParseResult
+) -> Result<(), String> {
+    match node.get_definition() {
+        Definition::Identifier => {
+            // check all identifier's for being a phrase part
+
+            // if there is an existing phrase in progress
+            // check if current identifier can be a part of that phrase
+            let phrase_text = node.get_lex_token().get_text().clone();
+            match phrases.last_mut() {
+                None => {
+                    // no existing phrase
+                    match context.get_phrase_status(&phrase_text) {
+                        PhraseStatus::Incomplete => {
+                            // start new phrase
+                            phrases.push(PhraseInfo::new(phrase_text));
+                        }
+                        PhraseStatus::Complete => {
+                            // single word phrase, resolve immediately
+                            // and add a new empty apply node
+                            let new_index = result.get_nodes().len();
+                            result.add_node(ParseNode::new(
+                                Definition::EmptyApply,
+                                SecondaryDefinition::UnarySuffix,
+                                node.get_parent(),
+                                Some(node_index),
+                                None,
+                                node.get_lex_token().clone(), // clone so debugging points to identifier
+                            ));
+
+                            if result.get_root() == node_index {
+                                result.set_root(new_index);
+                            }
+
+                            match result.get_node_mut(node_index) {
+                                None => Err(format!("Node at {} not found", node_index))?,
+                                Some(node) => {
+                                    node.set_parent(Some(new_index));
+                                }
+                            }
+                        }
+                        PhraseStatus::NotAPhrase => {} // continue no changes
+                    }
+                }
+                Some(info) => {
+                    // existing phrase, first check if current is continuation
+                    let new_phrase_text = info.full_text_with(&phrase_text);
+                    match context.get_phrase_status(&new_phrase_text) {
+                        PhraseStatus::NotAPhrase => {
+                            // not a continuation
+                            // check if current text can be a phrase on its own
+                            match context.get_phrase_status(&phrase_text) {
+                                PhraseStatus::Incomplete => {
+                                    phrases.push(PhraseInfo::new(phrase_text));
+                                }
+                                PhraseStatus::Complete => {
+                                    todo!()
+                                }
+                                PhraseStatus::NotAPhrase => {} // continue no changes
+                            }
+                        }
+                        PhraseStatus::Incomplete => {
+                            // continuation
+                            info.add_part(phrase_text);
+                        }
+                        PhraseStatus::Complete => {
+                            // end of multi-word phrase, resolve now
+
+                            // update current node token to be full phrase
+                            match result.get_node_mut(node_index) {
+                                None => Err(format!("Node at {} not found", node_index))?,
+                                Some(node) => {
+                                    let new_token = LexerToken::new(
+                                        new_phrase_text,
+                                        TokenType::Identifier,
+                                        node.get_lex_token().get_line(),
+                                        node.get_lex_token().get_column()
+                                    );
+                                    node.set_lex_token(new_token);
+                                }
+                            }
+
+                            // all multi-word phrases should have a parent
+                            // update parent to be empty apply
+                            match node.get_parent().and_then(|p| result.get_node_mut(p)) {
+                                None => Err(format!("Node at {} not found", node_index))?,
+                                Some(parent) => {
+                                    parent.set_definition(Definition::EmptyApply);
+
+                                    // empty expects left to be populated
+                                    // but current node should be the right one
+                                    // because if it were the left it would've resolved as a single word phrase
+                                    parent.set_left(Some(node_index));
+                                    parent.set_right(None);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        Definition::List => {
+            match node.get_right() {
+                None => (),
+                Some(right_index) => match original_result.get_node(right_index) {
+                    None => {}
+                    Some(right_node) => {
+                        check_node_for_phrase(
+                            right_node,
+                            right_index,
+                            phrases,
+                            context,
+                            original_result,
+                            result
+                        )?
+                    }
+                }
+            }
+        }
+        _ => {}
+    };
+
+    Ok(())
 }
 
 #[cfg(test)]
@@ -151,7 +217,8 @@ mod tests {
         let tokens = lex(input).unwrap();
         let parsed = parse(&tokens).unwrap();
 
-        let context = SimplePhraseContext::new();
+        let mut context = SimplePhraseContext::new();
+        context.add_phrase("perform_task").unwrap();
 
         let phrased_tokens = reduce_phrases(&parsed, &context).unwrap();
 
@@ -159,12 +226,11 @@ mod tests {
 
         assert_eq!(phrased_tokens.get_root(), 1);
         assert_eq!(apply_token.get_definition(), Definition::EmptyApply);
-        assert_eq!(apply_token.get_left(), Some(0));
+        assert_eq!(apply_token.get_left(), Some(2));
         assert_eq!(apply_token.get_right(), None);
         assert_eq!(apply_token.get_parent(), None);
-        assert_eq!(apply_token.get_lex_token().get_text(), "~~");
 
-        let identifier_token = phrased_tokens.get_node(0).unwrap();
+        let identifier_token = phrased_tokens.get_node(2).unwrap();
         assert_eq!(identifier_token.get_definition(), Definition::Identifier);
         assert_eq!(identifier_token.get_left(), None);
         assert_eq!(identifier_token.get_right(), None);
