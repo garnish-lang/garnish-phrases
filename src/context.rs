@@ -29,10 +29,14 @@ impl SimplePhraseContext {
     pub fn add_phrase(&mut self, phrase: &str) -> Result<(), SimpleContextCodes> {
         let parts = phrase.split("_").collect::<Vec<&str>>();
 
+        let mut running_parts = vec![];
+
         for part in parts.iter().take(parts.len() - 1) {
-            match self.part_map.get(*part) {
+            running_parts.push(*part);
+            let incomplete_phrase = running_parts.join("_");
+            match self.part_map.get(&incomplete_phrase) {
                 None => {
-                    self.part_map.insert(part.to_string(), PhraseStatus::Incomplete);
+                    self.part_map.insert(incomplete_phrase, PhraseStatus::Incomplete);
                 },
                 Some(status) => if *status == PhraseStatus::Complete {
                     return Err(SimpleContextCodes::CompleteVersionExists)
@@ -43,12 +47,16 @@ impl SimplePhraseContext {
 
         match parts.last() {
             None => unreachable!(),
-            Some(part) => match self.part_map.get(*part) {
-                None => {
-                    self.part_map.insert(part.to_string(), PhraseStatus::Complete);
-                }
-                Some(status) => if *status == PhraseStatus::Incomplete {
-                    return Err(SimpleContextCodes::IncompleteVersionExists);
+            Some(part) => {
+                running_parts.push(*part);
+                let complete_phrase = running_parts.join("_");
+                match self.part_map.get(&complete_phrase) {
+                    None => {
+                        self.part_map.insert(complete_phrase, PhraseStatus::Complete);
+                    }
+                    Some(status) => if *status == PhraseStatus::Incomplete {
+                        return Err(SimpleContextCodes::IncompleteVersionExists);
+                    }
                 }
             }
         };
@@ -100,7 +108,7 @@ mod tests {
 
         assert_eq!(result, Ok(()));
         assert_eq!(context.get_phrase_status("some"), PhraseStatus::Incomplete);
-        assert_eq!(context.get_phrase_status("phrase"), PhraseStatus::Complete);
+        assert_eq!(context.get_phrase_status("some_phrase"), PhraseStatus::Complete);
     }
 
     #[test]
