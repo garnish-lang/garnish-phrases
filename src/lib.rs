@@ -217,6 +217,12 @@ fn check_node_for_phrase<Context: PhraseContext>(
                             let arg = match info.arguments.len() {
                                 0 => {
                                     let new_index = result.get_nodes().len();
+                                    let empty_parent = if Some(result.get_root()) == node.get_parent() {
+                                        None
+                                    } else {
+                                        node.get_parent()
+                                    };
+
                                     match node.get_parent().and_then(|p| result.get_node_mut(p)) {
                                         None => Err(format!("Node at {:?} not found", node.get_parent()))?,
                                         Some(parent) => {
@@ -225,7 +231,7 @@ fn check_node_for_phrase<Context: PhraseContext>(
                                             result.add_node(ParseNode::new(
                                                 Definition::EmptyApply,
                                                 SecondaryDefinition::UnarySuffix,
-                                                node.get_parent(),
+                                                empty_parent,
                                                 Some(node_index),
                                                 None,
                                                 node.get_lex_token().clone(), // clone so debugging points to identifier
@@ -238,6 +244,10 @@ fn check_node_for_phrase<Context: PhraseContext>(
                                                 }
                                             }
                                         }
+                                    }
+
+                                    if Some(result.get_root()) == node.get_parent() {
+                                        result.set_root(new_index);
                                     }
 
                                     Some(new_index)
@@ -399,9 +409,9 @@ mod tests {
 
         let phrased_tokens = reduce_phrases(&parsed, &context).unwrap();
 
-        let apply_token = phrased_tokens.get_node(1).unwrap();
+        let apply_token = phrased_tokens.get_node(3).unwrap();
 
-        assert_eq!(phrased_tokens.get_root(), 1);
+        assert_eq!(phrased_tokens.get_root(), 3);
         assert_eq!(apply_token.get_definition(), Definition::EmptyApply);
         assert_eq!(apply_token.get_left(), Some(2));
         assert_eq!(apply_token.get_right(), None);
@@ -411,7 +421,7 @@ mod tests {
         assert_eq!(identifier_token.get_definition(), Definition::Identifier);
         assert_eq!(identifier_token.get_left(), None);
         assert_eq!(identifier_token.get_right(), None);
-        assert_eq!(identifier_token.get_parent(), Some(1));
+        assert_eq!(identifier_token.get_parent(), Some(3));
         assert_eq!(identifier_token.get_lex_token().get_text(), "perform_task");
     }
 
