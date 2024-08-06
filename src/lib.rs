@@ -30,46 +30,98 @@ pub fn reduce_phrases<Context: PhraseContext>(
     parse_result: &ParseResult,
     context: &Context,
 ) -> Result<ParseResult, String> {
-    let mut current_index = parse_result.get_root();
-    let mut next_node = parse_result.get_node(current_index);
-
+    let current_index = parse_result.get_root();
     let mut new_result = parse_result.clone();
-
-    // phrases read left to right regardless of precedence
-    // and only work with identifiers alone or that are children of space lists
-    // so don't need to check right of left most since list shouldn't be able to only have a right node
-    while let Some(next) = next_node
-        .ok_or(format!("Node {} not found", current_index))?
-        .get_left() {
-        current_index = next;
-        next_node = parse_result.get_node(next)
-    }
-
-    // walk up nodes checking for phrases
-
     let mut phrases = vec![];
-    while let Some(current_node) = next_node {
-        check_node_for_phrase(
-            current_node,
-            current_index,
+
+    // a single node can't be a parent
+    // and only needs a single check
+    if parse_result.get_nodes().len() == 1 {
+        check_node_index_for_phrase(
+            Some(current_index),
             &mut phrases,
             context,
             parse_result,
             &mut new_result
         )?;
 
-        match current_node.get_parent() {
-            None => {
-                next_node = None;
-            }
-            Some(parent) => {
-                current_index = parent;
-                next_node = parse_result.get_node(parent);
+        return Ok(new_result);
+    }
+
+    let mut parent_stack = vec![];
+    let mut process_stack = vec![current_index];
+
+    while let Some(current_index) = process_stack.pop() {
+        match parse_result.get_node(current_index) {
+            None => Err(format!("Node at index {} not present", current_index))?,
+            Some(node) => {
+                match (node.get_left(), node.get_right()) {
+                    (None, None) => continue, // not a parent, skip
+                    (Some(left_index), Some(right_index)) => {
+                        // process left then right will result in parent stack processing
+                        // left before right
+                        process_stack.push(left_index);
+                        process_stack.push(right_index);
+                    }
+                    (Some(left_index), None) => {
+                        process_stack.push(left_index);
+                    }
+                    (None, Some(right_index)) => {
+                        process_stack.push(right_index);
+                    }
+                }
+
+                parent_stack.push(current_index);
             }
         }
     }
 
+    while let Some(current_index) = parent_stack.pop() {
+        let node = parse_result.get_node(current_index)
+            .ok_or(format!("Node at index {} not present", current_index))?;
+
+        // check left then right for phrases
+        check_node_index_for_phrase(
+            node.get_left(),
+            &mut phrases,
+            context,
+            parse_result,
+            &mut new_result
+        )?;
+
+        check_node_index_for_phrase(
+            node.get_right(),
+            &mut phrases,
+            context,
+            parse_result,
+            &mut new_result
+        )?;
+    }
+
     return Ok(new_result);
+}
+
+fn check_node_index_for_phrase<Context: PhraseContext>(
+    node_index_opt: Option<usize>,
+    phrases: &mut Vec<PhraseInfo>,
+    context: &Context,
+    original_result: &ParseResult,
+    result: &mut ParseResult,
+) -> Result<(), String> {
+    match node_index_opt {
+        None => Ok(()),
+        Some(index) => match original_result.get_node(index) {
+            None => Ok(()),
+            Some(node) => check_node_for_phrase(
+                node,
+                index,
+                phrases,
+                context,
+                original_result,
+                result,
+            )
+        }
+    }
 }
 
 fn check_node_for_phrase<Context: PhraseContext>(
@@ -78,7 +130,7 @@ fn check_node_for_phrase<Context: PhraseContext>(
     phrases: &mut Vec<PhraseInfo>,
     context: &Context,
     original_result: &ParseResult,
-    result: &mut ParseResult
+    result: &mut ParseResult,
 ) -> Result<(), String> {
     match node.get_definition() {
         Definition::Identifier => {
@@ -154,7 +206,7 @@ fn check_node_for_phrase<Context: PhraseContext>(
                                         new_phrase_text,
                                         TokenType::Identifier,
                                         node.get_lex_token().get_line(),
-                                        node.get_lex_token().get_column()
+                                        node.get_lex_token().get_column(),
                                     );
                                     node.set_lex_token(new_token);
                                 }
@@ -191,7 +243,7 @@ fn check_node_for_phrase<Context: PhraseContext>(
                             phrases,
                             context,
                             original_result,
-                            result
+                            result,
                         )?
                     }
                 }
