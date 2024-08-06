@@ -207,24 +207,22 @@ fn check_node_for_phrase<Context: PhraseContext>(
                         PhraseStatus::Complete => {
                             // end of multi-word phrase, resolve now
 
+                            // update current node token to be full phrase
+                            match result.get_node_mut(node_index) {
+                                None => Err(format!("Node at {} not found", node_index))?,
+                                Some(node) => {
+                                    let new_token = LexerToken::new(
+                                        new_phrase_text,
+                                        TokenType::Identifier,
+                                        node.get_lex_token().get_line(),
+                                        node.get_lex_token().get_column(),
+                                    );
+                                    node.set_lex_token(new_token);
+                                }
+                            }
+
                             match info.arguments.len() {
                                 0 => {
-                                    // update current node token to be full phrase
-                                    match result.get_node_mut(node_index) {
-                                        None => Err(format!("Node at {} not found", node_index))?,
-                                        Some(node) => {
-                                            let new_token = LexerToken::new(
-                                                new_phrase_text,
-                                                TokenType::Identifier,
-                                                node.get_lex_token().get_line(),
-                                                node.get_lex_token().get_column(),
-                                            );
-                                            node.set_lex_token(new_token);
-                                        }
-                                    }
-
-                                    // all multi-word phrases should have a parent
-                                    // update parent to be empty apply
                                     match node.get_parent().and_then(|p| result.get_node_mut(p)) {
                                         None => Err(format!("Node at {} not found", node_index))?,
                                         Some(parent) => {
@@ -239,24 +237,6 @@ fn check_node_for_phrase<Context: PhraseContext>(
                                     }
                                 }
                                 1 => {
-                                    // update current node token to be full phrase
-
-                                    // this should be right side of parent
-                                    match result.get_node_mut(node_index) {
-                                        None => Err(format!("Node at {} not found", node_index))?,
-                                        Some(node) => {
-                                            let new_token = LexerToken::new(
-                                                new_phrase_text,
-                                                TokenType::Identifier,
-                                                node.get_lex_token().get_line(),
-                                                node.get_lex_token().get_column(),
-                                            );
-                                            node.set_lex_token(new_token);
-                                        }
-                                    }
-
-                                    // all multi-word phrases should have a parent
-                                    // update parent to be empty apply
                                     match node.get_parent().and_then(|p| result.get_node_mut(p)) {
                                         None => Err(format!("Node at {} not found", node_index))?,
                                         Some(parent) => {
@@ -278,23 +258,6 @@ fn check_node_for_phrase<Context: PhraseContext>(
                                     }
                                 }
                                 _n => {
-
-                                    // this should be right side of parent
-                                    match result.get_node_mut(node_index) {
-                                        None => Err(format!("Node at {} not found", node_index))?,
-                                        Some(node) => {
-                                            let new_token = LexerToken::new(
-                                                new_phrase_text,
-                                                TokenType::Identifier,
-                                                node.get_lex_token().get_line(),
-                                                node.get_lex_token().get_column(),
-                                            );
-                                            node.set_lex_token(new_token);
-                                        }
-                                    }
-
-                                    // all multi-word phrases should have a parent
-                                    // update parent to be empty apply
                                     let mut next_parent = match node.get_parent().and_then(|p| result.get_node_mut(p)) {
                                         None => Err(format!("Node at {:?} not found", node.get_parent()))?,
                                         Some(parent) => {
