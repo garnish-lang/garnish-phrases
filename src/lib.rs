@@ -278,19 +278,76 @@ fn check_node_for_phrase<Context: PhraseContext>(
                                     }
                                 }
                                 _n => {
-                                    // Create list of arguments on left side
-                                    // creating from top so reverse arguments to make first at bottom
-                                    // for (index, arg) in info.arguments.iter().enumerate().rev() {
-                                    //     match result.get_node_mut(left_index) {
-                                    //         None => Err(format!("Node at {} not found", node_index))?,
-                                    //         Some(left_node) => {
-                                    //             left_node.set_definition(Definition::List);
-                                    //             // set right to arg
-                                    //             left_node.set_right(Some(*arg));
-                                    //         }
-                                    //     }
-                                    // }
-                                    todo!()
+
+                                    // this should be right side of parent
+                                    match result.get_node_mut(node_index) {
+                                        None => Err(format!("Node at {} not found", node_index))?,
+                                        Some(node) => {
+                                            let new_token = LexerToken::new(
+                                                new_phrase_text,
+                                                TokenType::Identifier,
+                                                node.get_lex_token().get_line(),
+                                                node.get_lex_token().get_column(),
+                                            );
+                                            node.set_lex_token(new_token);
+                                        }
+                                    }
+
+                                    // all multi-word phrases should have a parent
+                                    // update parent to be empty apply
+                                    let mut next_parent = match node.get_parent().and_then(|p| result.get_node_mut(p)) {
+                                        None => Err(format!("Node at {:?} not found", node.get_parent()))?,
+                                        Some(parent) => {
+                                            // Using ApplyTo instead of Apply so no swapping needs to be done
+                                            parent.set_definition(Definition::ApplyTo);
+
+                                            parent.get_left()
+                                        }
+                                    };
+
+                                    // descend list attaching arguments in reverse order
+                                    // last two arguments will have same parent as left and right
+                                    // end at 1 so the 0th item can always be put on last list's left
+                                    for i in (1..info.arguments.len()).rev() {
+                                        let arg_index = *info.arguments.get(i).unwrap();
+
+                                        // update argument's parent
+                                        match result.get_node_mut(arg_index) {
+                                            None => Err(format!("Node at {} not found", arg_index))?,
+                                            Some(right) => {
+                                                right.set_parent(next_parent);
+                                            }
+                                        }
+
+                                        // update parent's right to point to argument
+                                        // and set next parent to left
+                                        let left = match next_parent.and_then(|i| result.get_node_mut(i)) {
+                                            None => Err(format!("Node at {:?} not found", next_parent))?,
+                                            Some(parent) => {
+                                                parent.set_right(Some(arg_index));
+                                                let left = parent.get_left();
+
+                                                // if on second to last arg
+                                                // grab last arg and update it and parent
+                                                if i == 1 {
+                                                    let arg_index = *info.arguments.get(0).unwrap();
+                                                    parent.set_left(Some(arg_index));
+
+                                                    match result.get_node_mut(arg_index) {
+                                                        None => Err(format!("Node at {:?} not found", arg_index))?,
+                                                        Some(left) => {
+                                                            left.set_parent(next_parent);
+                                                            break;
+                                                        }
+                                                    }
+                                                }
+
+                                                left
+                                            }
+                                        };
+
+                                        next_parent = left
+                                    }
                                 }
                             }
                         }
@@ -412,5 +469,52 @@ mod tests {
         assert_eq!(identifier_token.get_right(), None);
         assert_eq!(identifier_token.get_parent(), Some(3));
         assert_eq!(identifier_token.get_lex_token().get_text(), "perform_task");
+    }
+
+    #[test]
+    fn simple_phrase_with_two_arguments() {
+        let input = "perform 5 10 task";
+
+        let tokens = lex(input).unwrap();
+        let parsed = parse(&tokens).unwrap();
+
+        let mut context = SimplePhraseContext::new();
+        context.add_phrase("perform_task").unwrap();
+
+        let phrased_tokens = reduce_phrases(&parsed, &context).unwrap();
+
+        let apply_token = phrased_tokens.get_node(5).unwrap();
+
+        assert_eq!(apply_token.get_definition(), Definition::ApplyTo);
+        assert_eq!(apply_token.get_left(), Some(3));
+        assert_eq!(apply_token.get_right(), Some(6));
+        assert_eq!(apply_token.get_parent(), None);
+
+        let identifier_token = phrased_tokens.get_node(6).unwrap();
+        assert_eq!(identifier_token.get_definition(), Definition::Identifier);
+        assert_eq!(identifier_token.get_left(), None);
+        assert_eq!(identifier_token.get_right(), None);
+        assert_eq!(identifier_token.get_parent(), Some(5));
+        assert_eq!(identifier_token.get_lex_token().get_text(), "perform_task");
+
+        let identifier_token = phrased_tokens.get_node(3).unwrap();
+        assert_eq!(identifier_token.get_definition(), Definition::List);
+        assert_eq!(identifier_token.get_left(), Some(2));
+        assert_eq!(identifier_token.get_right(), Some(4));
+        assert_eq!(identifier_token.get_parent(), Some(5));
+
+        let identifier_token = phrased_tokens.get_node(2).unwrap();
+        assert_eq!(identifier_token.get_definition(), Definition::Number);
+        assert_eq!(identifier_token.get_left(), None);
+        assert_eq!(identifier_token.get_right(), None);
+        assert_eq!(identifier_token.get_parent(), Some(3));
+        assert_eq!(identifier_token.get_lex_token().get_text(), "5");
+
+        let identifier_token = phrased_tokens.get_node(4).unwrap();
+        assert_eq!(identifier_token.get_definition(), Definition::Number);
+        assert_eq!(identifier_token.get_left(), None);
+        assert_eq!(identifier_token.get_right(), None);
+        assert_eq!(identifier_token.get_parent(), Some(3));
+        assert_eq!(identifier_token.get_lex_token().get_text(), "10");
     }
 }
