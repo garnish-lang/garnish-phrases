@@ -83,21 +83,45 @@ pub fn reduce_phrases<Context: PhraseContext>(
     }
 
     while let Some(current_index) = parent_stack.pop() {
-        let node = parse_result.get_node(current_index)
+        let current_parent = parse_result.get_node(current_index)
             .ok_or(format!("Node at index {} not present", current_index))?;
 
         // check left then right for phrases
-        check_node_index_for_phrase(
-            node.get_left(),
-            &mut phrases,
-            context,
-            parse_result,
-            &mut new_result,
-            true,
-        )?;
+        match current_parent.get_left().and_then(|i| parse_result.get_node(i)) {
+            None => (),
+            Some(left_node) => {
+                check_node_for_phrase(
+                    left_node,
+                    current_parent.get_left().unwrap(),
+                    &mut phrases,
+                    context,
+                    &mut new_result,
+                    true
+                )?;
+
+                // phrases can only continue past a List operation
+                // all others will cause current phrase to end
+                let terminate_phrase = match current_parent.get_definition() {
+                    Definition::List => false,
+                    _ => true
+                };
+
+
+                if terminate_phrase {
+                    resolve_top_phrase(
+                        left_node,
+                        current_parent.get_left().unwrap(),
+                        true,
+                        &mut phrases,
+                        &mut new_result,
+                        None
+                    )?;
+                }
+            }
+        }
 
         check_node_index_for_phrase(
-            node.get_right(),
+            current_parent.get_right(),
             &mut phrases,
             context,
             parse_result,
@@ -199,143 +223,14 @@ fn check_node_for_phrase<Context: PhraseContext>(
                         }
                         PhraseStatus::Complete => {
                             // end of multi-word phrase, resolve now
-
-                            // update current node token to be full phrase
-                            match result.get_node_mut(node_index) {
-                                None => Err(format!("Node at {} not found", node_index))?,
-                                Some(node) => {
-                                    let new_token = LexerToken::new(
-                                        new_phrase_text,
-                                        TokenType::Identifier,
-                                        node.get_lex_token().get_line(),
-                                        node.get_lex_token().get_column(),
-                                    );
-                                    node.set_lex_token(new_token);
-                                }
-                            }
-
-                            let arg = match info.arguments.len() {
-                                0 => {
-                                    let new_index = result.get_nodes().len();
-                                    let empty_parent = if Some(result.get_root()) == node.get_parent() {
-                                        None
-                                    } else {
-                                        node.get_parent()
-                                    };
-
-                                    match node.get_parent().and_then(|p| result.get_node_mut(p)) {
-                                        None => Err(format!("Node at {:?} not found", node.get_parent()))?,
-                                        Some(parent) => {
-                                            parent.set_right(Some(new_index));
-
-                                            result.add_node(ParseNode::new(
-                                                Definition::EmptyApply,
-                                                SecondaryDefinition::UnarySuffix,
-                                                empty_parent,
-                                                Some(node_index),
-                                                None,
-                                                node.get_lex_token().clone(), // clone so debugging points to identifier
-                                            ));
-
-                                            match result.get_node_mut(node_index) {
-                                                None => Err(format!("Node at {} not found", node_index))?,
-                                                Some(node) => {
-                                                    node.set_parent(Some(new_index));
-                                                }
-                                            }
-                                        }
-                                    }
-
-                                    if Some(result.get_root()) == node.get_parent() {
-                                        result.set_root(new_index);
-                                    }
-
-                                    Some(new_index)
-                                }
-                                1 => {
-                                    match node.get_parent().and_then(|p| result.get_node_mut(p)) {
-                                        None => Err(format!("Node at {:?} not found", node.get_parent()))?,
-                                        Some(parent) => {
-                                            // Using ApplyTo instead of Apply so no swapping needs to be done
-                                            parent.set_definition(Definition::ApplyTo);
-
-                                            // for single argument just replace current left side to point to argument
-                                            let new_left = info.arguments.get(0).cloned();
-                                            parent.set_left(new_left);
-
-                                            // update argument to correct parent
-                                            match new_left.and_then(|i| result.get_node_mut(i)) {
-                                                None => Err(format!("Node at {:?} not found", new_left))?,
-                                                Some(left_node) => {
-                                                    left_node.set_parent(node.get_parent())
-                                                }
-                                            }
-                                        }
-                                    }
-                                    node.get_parent()
-                                }
-                                _n => {
-                                    let mut next_parent = match node.get_parent().and_then(|p| result.get_node_mut(p)) {
-                                        None => Err(format!("Node at {:?} not found", node.get_parent()))?,
-                                        Some(parent) => {
-                                            // Using ApplyTo instead of Apply so no swapping needs to be done
-                                            parent.set_definition(Definition::ApplyTo);
-
-                                            parent.get_left()
-                                        }
-                                    };
-
-                                    // descend list attaching arguments in reverse order
-                                    // last two arguments will have same parent as left and right
-                                    // end at 1 so the 0th item can always be put on last list's left
-                                    for i in (1..info.arguments.len()).rev() {
-                                        let arg_index = *info.arguments.get(i).unwrap();
-
-                                        // update argument's parent
-                                        match result.get_node_mut(arg_index) {
-                                            None => Err(format!("Node at {} not found", arg_index))?,
-                                            Some(right) => {
-                                                right.set_parent(next_parent);
-                                            }
-                                        }
-
-                                        // update parent's right to point to argument
-                                        // and set next parent to left
-                                        let left = match next_parent.and_then(|i| result.get_node_mut(i)) {
-                                            None => Err(format!("Node at {:?} not found", next_parent))?,
-                                            Some(parent) => {
-                                                parent.set_right(Some(arg_index));
-                                                let left = parent.get_left();
-
-                                                // if on second to last arg
-                                                // grab last arg and update it and parent
-                                                if i == 1 {
-                                                    let arg_index = *info.arguments.get(0).unwrap();
-                                                    parent.set_left(Some(arg_index));
-
-                                                    match result.get_node_mut(arg_index) {
-                                                        None => Err(format!("Node at {:?} not found", arg_index))?,
-                                                        Some(left) => {
-                                                            left.set_parent(next_parent);
-                                                            break;
-                                                        }
-                                                    }
-                                                }
-
-                                                left
-                                            }
-                                        };
-
-                                        next_parent = left;
-                                    }
-
-                                    node.get_parent()
-                                }
-                            };
-
-                            phrases.pop();
-
-                            arg
+                            resolve_top_phrase(
+                                node,
+                                node_index,
+                                is_left_of_parent,
+                                phrases,
+                                result,
+                                Some(new_phrase_text)
+                            )?
                         }
                     }
                 }
@@ -388,6 +283,166 @@ fn resolve_single_word_phrase(
     }
 
     Ok(Some(new_index))
+}
+
+fn resolve_top_phrase(
+    node: &ParseNode,
+    node_index: usize,
+    is_left_of_parent: bool,
+    phrases: &mut Vec<PhraseInfo>,
+    result: &mut ParseResult,
+    text: Option<String>
+) -> Result<Option<usize>, String> {
+    let info = match phrases.last() {
+        None => return Ok(None),
+        Some(i) => i
+    };
+
+    let new_phrase_text = match text {
+        None =>  info.full_text(),
+        Some(text) => text,
+    };
+
+    // update current node token to be full phrase
+    match result.get_node_mut(node_index) {
+        None => Err(format!("Node at {} not found", node_index))?,
+        Some(node) => {
+            let new_token = LexerToken::new(
+                new_phrase_text,
+                TokenType::Identifier,
+                node.get_lex_token().get_line(),
+                node.get_lex_token().get_column(),
+            );
+            node.set_lex_token(new_token);
+        }
+    }
+
+    let arg = match info.arguments.len() {
+        0 => {
+            let new_index = result.get_nodes().len();
+            // let mut empty_parent = if Some(result.get_root()) == node.get_parent() {
+            //     None
+            // } else {
+            //     node.get_parent()
+            // };
+
+            match node.get_parent().and_then(|p| result.get_node_mut(p)) {
+                None => Err(format!("Node at {:?} not found", node.get_parent()))?,
+                Some(parent) => {
+                    match is_left_of_parent {
+                        true => parent.set_left(Some(new_index)),
+                        false => parent.set_right(Some(new_index)),
+                    }
+
+
+                    result.add_node(ParseNode::new(
+                        Definition::EmptyApply,
+                        SecondaryDefinition::UnarySuffix,
+                        node.get_parent(),
+                        Some(node_index),
+                        None,
+                        node.get_lex_token().clone(), // clone so debugging points to identifier
+                    ));
+
+                    match result.get_node_mut(node_index) {
+                        None => Err(format!("Node at {} not found", node_index))?,
+                        Some(node) => {
+                            node.set_parent(Some(new_index));
+                        }
+                    }
+                }
+            }
+
+            // if Some(result.get_root()) == node.get_parent() {
+            //     result.set_root(new_index);
+            // }
+
+            Some(new_index)
+        }
+        1 => {
+            match node.get_parent().and_then(|p| result.get_node_mut(p)) {
+                None => Err(format!("Node at {:?} not found", node.get_parent()))?,
+                Some(parent) => {
+                    // Using ApplyTo instead of Apply so no swapping needs to be done
+                    parent.set_definition(Definition::ApplyTo);
+
+                    // for single argument just replace current left side to point to argument
+                    let new_left = info.arguments.get(0).cloned();
+                    parent.set_left(new_left);
+
+                    // update argument to correct parent
+                    match new_left.and_then(|i| result.get_node_mut(i)) {
+                        None => Err(format!("Node at {:?} not found", new_left))?,
+                        Some(left_node) => {
+                            left_node.set_parent(node.get_parent())
+                        }
+                    }
+                }
+            }
+            node.get_parent()
+        }
+        _n => {
+            let mut next_parent = match node.get_parent().and_then(|p| result.get_node_mut(p)) {
+                None => Err(format!("Node at {:?} not found", node.get_parent()))?,
+                Some(parent) => {
+                    // Using ApplyTo instead of Apply so no swapping needs to be done
+                    parent.set_definition(Definition::ApplyTo);
+
+                    parent.get_left()
+                }
+            };
+
+            // descend list attaching arguments in reverse order
+            // last two arguments will have same parent as left and right
+            // end at 1 so the 0th item can always be put on last list's left
+            for i in (1..info.arguments.len()).rev() {
+                let arg_index = *info.arguments.get(i).unwrap();
+
+                // update argument's parent
+                match result.get_node_mut(arg_index) {
+                    None => Err(format!("Node at {} not found", arg_index))?,
+                    Some(right) => {
+                        right.set_parent(next_parent);
+                    }
+                }
+
+                // update parent's right to point to argument
+                // and set next parent to left
+                let left = match next_parent.and_then(|i| result.get_node_mut(i)) {
+                    None => Err(format!("Node at {:?} not found", next_parent))?,
+                    Some(parent) => {
+                        parent.set_right(Some(arg_index));
+                        let left = parent.get_left();
+
+                        // if on second to last arg
+                        // grab last arg and update it and parent
+                        if i == 1 {
+                            let arg_index = *info.arguments.get(0).unwrap();
+                            parent.set_left(Some(arg_index));
+
+                            match result.get_node_mut(arg_index) {
+                                None => Err(format!("Node at {:?} not found", arg_index))?,
+                                Some(left) => {
+                                    left.set_parent(next_parent);
+                                    break;
+                                }
+                            }
+                        }
+
+                        left
+                    }
+                };
+
+                next_parent = left;
+            }
+
+            node.get_parent()
+        }
+    };
+
+    phrases.pop();
+
+    Ok(arg)
 }
 
 #[cfg(test)]
@@ -731,5 +786,48 @@ mod tests {
         assert_eq!(identifier_token.get_right(), None);
         assert_eq!(identifier_token.get_parent(), Some(7));
         assert_eq!(identifier_token.get_lex_token().get_text(), "super_special");
+    }
+
+    #[test]
+    fn operator_terminates_phrase() {
+        let input = "perform + task";
+
+        let tokens = lex(input).unwrap();
+        let parsed = parse(&tokens).unwrap();
+
+        let mut context = SimplePhraseContext::new();
+        context.add_phrase("perform_task").unwrap();
+
+        let phrased_tokens = reduce_phrases(&parsed, &context).unwrap();
+
+        let apply_token = phrased_tokens.get_node(1).unwrap();
+
+        assert_eq!(phrased_tokens.get_nodes().len(), 4);
+
+        assert_eq!(phrased_tokens.get_root(), 1);
+        assert_eq!(apply_token.get_definition(), Definition::Addition);
+        assert_eq!(apply_token.get_left(), Some(3));
+        assert_eq!(apply_token.get_right(), Some(2));
+        assert_eq!(apply_token.get_parent(), None);
+
+        let identifier_token = phrased_tokens.get_node(2).unwrap();
+        assert_eq!(identifier_token.get_definition(), Definition::Identifier);
+        assert_eq!(identifier_token.get_left(), None);
+        assert_eq!(identifier_token.get_right(), None);
+        assert_eq!(identifier_token.get_parent(), Some(1));
+        assert_eq!(identifier_token.get_lex_token().get_text(), "task");
+
+        let identifier_token = phrased_tokens.get_node(3).unwrap();
+        assert_eq!(identifier_token.get_definition(), Definition::EmptyApply);
+        assert_eq!(identifier_token.get_left(), Some(0));
+        assert_eq!(identifier_token.get_right(), None);
+        assert_eq!(identifier_token.get_parent(), Some(1));
+
+        let identifier_token = phrased_tokens.get_node(0).unwrap();
+        assert_eq!(identifier_token.get_definition(), Definition::Identifier);
+        assert_eq!(identifier_token.get_left(), None);
+        assert_eq!(identifier_token.get_right(), None);
+        assert_eq!(identifier_token.get_parent(), Some(3));
+        assert_eq!(identifier_token.get_lex_token().get_text(), "perform");
     }
 }
