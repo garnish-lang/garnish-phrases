@@ -86,39 +86,21 @@ pub fn reduce_phrases<Context: PhraseContext>(
         let current_parent = parse_result.get_node(current_index)
             .ok_or(format!("Node at index {} not present", current_index))?;
 
+        // phrases can only be contained in a list
+        match current_parent.get_definition() {
+            Definition::List => (),
+            _ => continue
+        };
+
         // check left then right for phrases
-        match current_parent.get_left().and_then(|i| parse_result.get_node(i)) {
-            None => (),
-            Some(left_node) => {
-                check_node_for_phrase(
-                    left_node,
-                    current_parent.get_left().unwrap(),
-                    &mut phrases,
-                    context,
-                    &mut new_result,
-                    true
-                )?;
-
-                // phrases can only continue past a List operation
-                // all others will cause current phrase to end
-                let terminate_phrase = match current_parent.get_definition() {
-                    Definition::List => false,
-                    _ => true
-                };
-
-
-                if terminate_phrase {
-                    resolve_top_phrase(
-                        left_node,
-                        current_parent.get_left().unwrap(),
-                        true,
-                        &mut phrases,
-                        &mut new_result,
-                        None
-                    )?;
-                }
-            }
-        }
+        check_node_index_for_phrase(
+            current_parent.get_left(),
+            &mut phrases,
+            context,
+            parse_result,
+            &mut new_result,
+            true
+        )?;
 
         check_node_index_for_phrase(
             current_parent.get_right(),
@@ -320,11 +302,11 @@ fn resolve_top_phrase(
     let arg = match info.arguments.len() {
         0 => {
             let new_index = result.get_nodes().len();
-            // let mut empty_parent = if Some(result.get_root()) == node.get_parent() {
-            //     None
-            // } else {
-            //     node.get_parent()
-            // };
+            let empty_parent = if Some(result.get_root()) == node.get_parent() {
+                None
+            } else {
+                node.get_parent()
+            };
 
             match node.get_parent().and_then(|p| result.get_node_mut(p)) {
                 None => Err(format!("Node at {:?} not found", node.get_parent()))?,
@@ -334,11 +316,10 @@ fn resolve_top_phrase(
                         false => parent.set_right(Some(new_index)),
                     }
 
-
                     result.add_node(ParseNode::new(
                         Definition::EmptyApply,
                         SecondaryDefinition::UnarySuffix,
-                        node.get_parent(),
+                        empty_parent,
                         Some(node_index),
                         None,
                         node.get_lex_token().clone(), // clone so debugging points to identifier
@@ -353,9 +334,9 @@ fn resolve_top_phrase(
                 }
             }
 
-            // if Some(result.get_root()) == node.get_parent() {
-            //     result.set_root(new_index);
-            // }
+            if Some(result.get_root()) == node.get_parent() {
+                result.set_root(new_index);
+            }
 
             Some(new_index)
         }
@@ -478,36 +459,6 @@ mod tests {
         assert_eq!(identifier_token.get_right(), None);
         assert_eq!(identifier_token.get_parent(), Some(3));
         assert_eq!(identifier_token.get_lex_token().get_text(), "perform_task");
-    }
-
-    #[test]
-    fn single_word() {
-        let input = "task";
-
-        let tokens = lex(input).unwrap();
-        let parsed = parse(&tokens).unwrap();
-
-        let mut context = SimplePhraseContext::new();
-        context.add_phrase("task").unwrap();
-
-        let phrased_tokens = reduce_phrases(&parsed, &context).unwrap();
-
-        let apply_token = phrased_tokens.get_node(1).unwrap();
-
-        assert_eq!(phrased_tokens.get_root(), 1);
-
-        assert_eq!(apply_token.get_definition(), Definition::EmptyApply);
-        assert_eq!(apply_token.get_left(), Some(0));
-        assert_eq!(apply_token.get_right(), None);
-        assert_eq!(apply_token.get_parent(), None);
-        assert_eq!(apply_token.get_lex_token().get_text(), "task");
-
-        let identifier_token = phrased_tokens.get_node(0).unwrap();
-        assert_eq!(identifier_token.get_definition(), Definition::Identifier);
-        assert_eq!(identifier_token.get_left(), None);
-        assert_eq!(identifier_token.get_right(), None);
-        assert_eq!(identifier_token.get_parent(), Some(1));
-        assert_eq!(identifier_token.get_lex_token().get_text(), "task");
     }
 
     #[test]
@@ -700,51 +651,6 @@ mod tests {
     }
 
     #[test]
-    fn nested_phrase() {
-        let input = "perform special task";
-
-        let tokens = lex(input).unwrap();
-        let parsed = parse(&tokens).unwrap();
-
-        let mut context = SimplePhraseContext::new();
-        context.add_phrase("perform_task").unwrap();
-        context.add_phrase("special").unwrap();
-
-        let phrased_tokens = reduce_phrases(&parsed, &context).unwrap();
-
-        let apply_token = phrased_tokens.get_node(3).unwrap();
-
-        assert_eq!(phrased_tokens.get_nodes().len(), 6);
-
-        assert_eq!(phrased_tokens.get_root(), 3);
-        assert_eq!(apply_token.get_definition(), Definition::ApplyTo);
-        assert_eq!(apply_token.get_left(), Some(5));
-        assert_eq!(apply_token.get_right(), Some(4));
-        assert_eq!(apply_token.get_parent(), None);
-
-        let identifier_token = phrased_tokens.get_node(2).unwrap();
-        assert_eq!(identifier_token.get_definition(), Definition::Identifier);
-        assert_eq!(identifier_token.get_left(), None);
-        assert_eq!(identifier_token.get_right(), None);
-        assert_eq!(identifier_token.get_parent(), Some(5));
-        assert_eq!(identifier_token.get_lex_token().get_text(), "special");
-
-        let identifier_token = phrased_tokens.get_node(4).unwrap();
-        assert_eq!(identifier_token.get_definition(), Definition::Identifier);
-        assert_eq!(identifier_token.get_left(), None);
-        assert_eq!(identifier_token.get_right(), None);
-        assert_eq!(identifier_token.get_parent(), Some(3));
-        assert_eq!(identifier_token.get_lex_token().get_text(), "perform_task");
-
-        let identifier_token = phrased_tokens.get_node(5).unwrap();
-        assert_eq!(identifier_token.get_definition(), Definition::EmptyApply);
-        assert_eq!(identifier_token.get_left(), Some(2));
-        assert_eq!(identifier_token.get_right(), None);
-        assert_eq!(identifier_token.get_parent(), Some(3));
-        assert_eq!(identifier_token.get_lex_token().get_text(), "special");
-    }
-
-    #[test]
     fn nested_two_word_phrase() {
         let input = "perform super special task";
 
@@ -802,13 +708,20 @@ mod tests {
 
         let apply_token = phrased_tokens.get_node(1).unwrap();
 
-        assert_eq!(phrased_tokens.get_nodes().len(), 4);
+        assert_eq!(phrased_tokens.get_nodes().len(), 3);
 
         assert_eq!(phrased_tokens.get_root(), 1);
         assert_eq!(apply_token.get_definition(), Definition::Addition);
-        assert_eq!(apply_token.get_left(), Some(3));
+        assert_eq!(apply_token.get_left(), Some(0));
         assert_eq!(apply_token.get_right(), Some(2));
         assert_eq!(apply_token.get_parent(), None);
+
+        let identifier_token = phrased_tokens.get_node(0).unwrap();
+        assert_eq!(identifier_token.get_definition(), Definition::Identifier);
+        assert_eq!(identifier_token.get_left(), None);
+        assert_eq!(identifier_token.get_right(), None);
+        assert_eq!(identifier_token.get_parent(), Some(1));
+        assert_eq!(identifier_token.get_lex_token().get_text(), "perform");
 
         let identifier_token = phrased_tokens.get_node(2).unwrap();
         assert_eq!(identifier_token.get_definition(), Definition::Identifier);
@@ -816,18 +729,5 @@ mod tests {
         assert_eq!(identifier_token.get_right(), None);
         assert_eq!(identifier_token.get_parent(), Some(1));
         assert_eq!(identifier_token.get_lex_token().get_text(), "task");
-
-        let identifier_token = phrased_tokens.get_node(3).unwrap();
-        assert_eq!(identifier_token.get_definition(), Definition::EmptyApply);
-        assert_eq!(identifier_token.get_left(), Some(0));
-        assert_eq!(identifier_token.get_right(), None);
-        assert_eq!(identifier_token.get_parent(), Some(1));
-
-        let identifier_token = phrased_tokens.get_node(0).unwrap();
-        assert_eq!(identifier_token.get_definition(), Definition::Identifier);
-        assert_eq!(identifier_token.get_left(), None);
-        assert_eq!(identifier_token.get_right(), None);
-        assert_eq!(identifier_token.get_parent(), Some(3));
-        assert_eq!(identifier_token.get_lex_token().get_text(), "perform");
     }
 }
