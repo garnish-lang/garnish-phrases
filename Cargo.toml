@@ -2,6 +2,8 @@
 name = "garnish_phrases"
 version = "0.0.1"
 edition = "2021"
+description = "Garnish language preprocessor for passing arguments in a more readable way"
+license = "MIT"
 
 [dependencies]
 garnish_lang_traits = { version = "0.0.12-alpha" }
