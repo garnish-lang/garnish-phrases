@@ -4,9 +4,9 @@ version = 3
 
 [[package]]
 name = "garnish_lang_compiler"
-version = "0.0.14-alpha"
+version = "0.0.15-alpha"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2578c9727ab971f646bd8ee746445a9c44604b2b5eb7d7d1a4dc0586bb06c615"
+checksum = "fff7e274989cad2f30fe7a831c6f7243f6d34be4807a509f907e04c065306981"
 dependencies = [
  "garnish_lang_traits",
  "log",
@@ -14,13 +14,13 @@ dependencies = [
 
 [[package]]
 name = "garnish_lang_traits"
-version = "0.0.14-alpha"
+version = "0.0.15-alpha"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a6d9bb0b740b0fa79da6b58a2e1200886d6d72bcd071270393cd4b3fa0bba098"
+checksum = "7dbad9087776e9d2751165630adde76b76985ba14e17419d30167724c346ae21"
 
 [[package]]
 name = "garnish_phrases"
-version = "0.0.3"
+version = "0.0.4"
 dependencies = [
  "garnish_lang_compiler",
  "garnish_lang_traits",
