@@ -1,10 +1,10 @@
 [package]
 name = "garnish_phrases"
-version = "0.0.6"
+version = "0.0.7"
 edition = "2021"
 description = "Garnish language preprocessor for passing arguments in a more readable way"
 license = "MIT"
 
 [dependencies]
-garnish_lang_traits = { version = "0.0.17-alpha" }
-garnish_lang_compiler = { version = "0.0.17-alpha" }
+garnish_lang_traits = { version = "0.0.18-alpha" }
+garnish_lang_compiler = { version = "0.0.18-alpha" }
